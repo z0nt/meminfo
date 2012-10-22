@@ -182,7 +182,7 @@ main(int argc, char **argv)
 	for (m = TAILQ_FIRST(&page_queues[queue].pl); m != NULL; m = next) {
 		MMAP(m, m);
 		next = TAILQ_NEXT(m, pageq);
-		if (m->object == 0) {
+		if (m->object == NULL) {
 			MUNMAP(m);
 			continue;
 		}
