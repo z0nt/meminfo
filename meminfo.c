@@ -1,4 +1,4 @@
-/*_
+/*-
  * Copyright (c) 2012 Andrey Zonov <zont@FreeBSD.org>
  * All rights reserved.
  *
