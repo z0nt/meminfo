@@ -65,6 +65,31 @@ struct	namecache {
 };
 
 /*
+ * Local vm objects cache
+ */
+struct objcache {
+	RB_ENTRY(objcache)	 olink;
+	vm_object_t		 obj;
+	objtype_t		 type;
+	struct vnode		*vp;
+};
+
+static RB_HEAD(objects, objcache) objects = RB_INITIALIZER(&objects);
+RB_PROTOTYPE_STATIC(objects, objcache, olink, objcmp);
+
+static int
+objcmp(struct objcache *objc1, struct objcache *objc2)
+{
+
+	if (objc1->obj == objc2->obj)
+		return (0);
+	if (objc1->obj > objc2->obj)
+		return (1);
+	return (-1);
+}
+RB_GENERATE_STATIC(objects, objcache, olink, objcmp);
+
+/*
  * Local vnode cache
  */
 struct vncache {
@@ -90,6 +115,8 @@ RB_GENERATE_STATIC(vnodes, vncache, vlink, vnodecmp);
 
 static int fd;
 static int mflag;
+static int objtreport;
+static int vnreport;
 static char sym[] = "vm_page_queues";
 static u_long objt_hits[OBJT_SG + 1];
 static const char *objt_name[] = {
@@ -103,7 +130,14 @@ static const char *objt_name[] = {
 };
 
 static void usage(void);
+
 static void objt_report(void);
+static void obj_acc(vm_object_t obj);
+static void obj_handle(vm_object_t obj, struct objcache *objc);
+static struct objcache *obj_lookup(vm_object_t obj);
+static struct objcache *obj_alloc(vm_object_t obj);
+static void obj_insert(struct objcache *objc);
+
 static void vn_report(void);
 static void vn_acc(struct vnode *vp);
 static struct vncache *vc_lookup(struct vnode *vp);
@@ -131,14 +165,11 @@ static void vn_lookup(struct vnode *vp, char *buf, char **retbuf);
 int
 main(int argc, char **argv)
 {
-	int ch, objtreport, vnreport, queue;
+	int ch, queue;
 	struct kld_sym_lookup kld;
 	struct vpgqueues *page_queues;
 	vm_page_t m, next;
-	vm_object_t obj;
 
-	objtreport = 0;
-	vnreport = 0;
 	queue = -1;
 	while ((ch = getopt(argc, argv, "hmovq:")) != -1) {
 		switch (ch) {
@@ -183,32 +214,9 @@ main(int argc, char **argv)
 	for (m = TAILQ_FIRST(&page_queues[queue].pl); m != NULL; m = next) {
 		MMAP(m, m);
 		next = TAILQ_NEXT(m, pageq);
-		if (m->object == NULL) {
-			MUNMAP(m);
-			continue;
-		}
-		MMAP(obj, m->object);
+		if (m->object != NULL)
+			obj_acc(m->object);
 		MUNMAP(m);
-
-		switch (obj->type) {
-		case OBJT_DEFAULT:
-		case OBJT_SWAP:
-			break;
-		case OBJT_VNODE:
-			if (vnreport)
-				vn_acc(obj->handle);
-			break;
-		case OBJT_DEVICE:
-		case OBJT_PHYS:
-		case OBJT_DEAD:
-		case OBJT_SG:
-			break;
-		default:
-			errx(1, "Unknown object type: %d", obj->type);
-		}
-		objt_hits[obj->type]++;
-
-		MUNMAP(obj);
 	}
 
 	if (objtreport)
@@ -249,6 +257,90 @@ objt_report(void)
 		if (hits)
 			printf("%12s = %lu\n", objt_name[i], hits);
 	}
+}
+
+static void
+obj_acc(vm_object_t obj)
+{
+	struct objcache *objc;
+
+	/* Looking for a cached object */
+	objc = obj_lookup(obj);
+	if (objc == NULL) {
+		/* Create new cached object */
+		objc = obj_alloc(obj);
+		/* Handle it */
+		obj_handle(obj, objc);
+		/* Insert it into tree */
+		obj_insert(objc);
+	}
+
+	if (objtreport)
+		objt_hits[objc->type]++;
+	if (vnreport) {
+		if (objc->type == OBJT_VNODE)
+			vn_acc(objc->vp);
+	}
+}
+
+static void
+obj_handle(vm_object_t obj, struct objcache *objc)
+{
+
+	MMAP(obj, obj);
+
+	switch (obj->type) {
+	case OBJT_DEFAULT:
+	case OBJT_SWAP:
+		break;
+	case OBJT_VNODE:
+		objc->vp = obj->handle;
+		break;
+	case OBJT_DEVICE:
+	case OBJT_PHYS:
+	case OBJT_DEAD:
+	case OBJT_SG:
+		break;
+	default:
+		errx(1, "Unknown object type: %d", obj->type);
+	}
+	objc->type = obj->type;
+
+	MUNMAP(obj);
+}
+
+static struct objcache *
+obj_lookup(vm_object_t obj)
+{
+	struct objcache key, *objc;
+
+	key.obj = obj;
+	objc = RB_FIND(objects, &objects, &key);
+
+	return (objc);
+}
+
+static struct objcache *
+obj_alloc(vm_object_t obj)
+{
+	struct objcache *objc;
+
+	objc = malloc(sizeof(*objc));
+	if (objc == NULL)
+		err(1, "malloc(objc)");
+	objc->obj = obj;
+
+	return (objc);
+}
+
+static void
+obj_insert(struct objcache *objc)
+{
+	struct objcache *old;
+
+	old = RB_INSERT(objects, &objects, objc);
+	if (old != NULL)
+		errx(1, "duplicate vm object key");
 }
 
 static void
@@ -320,7 +412,7 @@ vc_insert(struct vncache *vc)
 
 	old = RB_INSERT(vnodes, &vnodes, vc);
 	if (old != NULL)
-		errx(1, "duplicate key");
+		errx(1, "duplicate vnode key");
 }
 
 static void
