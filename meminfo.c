@@ -26,6 +26,7 @@
 
 #include <sys/param.h>
 
+#include <sys/conf.h>
 #include <sys/linker.h>
 #include <sys/mman.h>
 #define	_KERNEL
@@ -347,9 +348,13 @@ static void
 vn_lookup(struct vnode *vp, char *buf, char **retbuf)
 {
 	int len;
+	struct cdev *dev;
 	struct inode *ip;
 	struct vnode *dvp;
 	struct namecache *ncp;
+
+	if (vp->v_vflag & VV_ROOT)
+		return;
 
 	ncp = TAILQ_FIRST(&vp->v_cache_dst);
 	if (ncp != NULL) {
@@ -361,12 +366,22 @@ vn_lookup(struct vnode *vp, char *buf, char **retbuf)
 		*retbuf += len;
 		MUNMAP(ncp);
 	} else {
-		if (vp->v_type == VREG) {
+		if (vp->v_type == VREG || vp->v_type == VDIR) {
 			MMAP(ip, vp->v_data);
-			len = snprintf(*retbuf, MAXPATHLEN,
-			    " inode=%d (deleted)", ip->i_number);
+			len = snprintf(*retbuf, MAXPATHLEN - (*retbuf - buf),
+			    "/(%s inode=%d)",
+			    ip->i_nlink ? "no cached name for" : "deleted",
+			    ip->i_number);
 			*retbuf += len;
 			MUNMAP(ip);
-		}
+		} else if (vp->v_type == VCHR) {
+			MMAP(dev, vp->v_un.vu_cdev);
+			len = snprintf(*retbuf, MAXPATHLEN - (*retbuf - buf),
+			    "/%s (cdev)", /* dev->si_name */
+			    (char *)dev + sizeof(*dev) - (SPECNAMELEN + 1));
+			*retbuf += len;
+			MUNMAP(dev);
+		} else
+			errx(1, "Unknown vnode type: %d", vp->v_type);
 	}
 }
