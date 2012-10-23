@@ -90,7 +90,7 @@ objcmp(struct objcache *objc1, struct objcache *objc2)
 RB_GENERATE_STATIC(objects, objcache, olink, objcmp);
 
 /*
- * Local vnode cache
+ * Local vnodes cache
  */
 struct vncache {
 	RB_ENTRY(vncache)	 vlink;
