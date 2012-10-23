@@ -68,10 +68,10 @@ struct	namecache {
  * Local vnode cache
  */
 struct vncache {
-	RB_ENTRY(vncache)  vlink;
-	struct vnode	  *vp;
-	u_long		   hits;
-	char		  *fullpath;
+	RB_ENTRY(vncache)	 vlink;
+	struct vnode		*vp;
+	u_long			 hits;
+	char			*fullpath;
 };
 static RB_HEAD(vnodes, vncache) vnodes = RB_INITIALIZER(&vnodes);
 RB_PROTOTYPE_STATIC(vnodes, vncache, vlink, vnodecmp);
