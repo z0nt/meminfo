@@ -194,7 +194,7 @@ main(int argc, char **argv)
 	if (objtreport == 0 && vnreport == 0)
 		usage();
 
-	if (queue < PQ_INACTIVE || queue > PQ_HOLD)
+	if (queue < PQ_INACTIVE || queue > PQ_ACTIVE)
 		usage();
 
 	fd = open(_PATH_KMEM, O_RDONLY, 0);
@@ -239,8 +239,7 @@ usage(void)
 			"    -v report about vnode hits\n"
 			"    -q page queue:\n"
 			"       0 - PQ_INACTIVE\n"
-			"       1 - PQ_ACTIVE\n"
-			"       2 - PQ_HOLD\n");
+			"       1 - PQ_ACTIVE\n");
 	exit(1);
 }
 
