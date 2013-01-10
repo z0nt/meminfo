@@ -113,11 +113,18 @@ vnodecmp(struct vncache *vc1, struct vncache *vc2)
 }
 RB_GENERATE_STATIC(vnodes, vncache, vlink, vnodecmp);
 
+#ifdef	vm_pagequeue_lock
+static char sym[] = "vm_pagequeues";
+typedef struct vm_pagequeue vm_pagequeue_t;
+#else /* before r242941 */
+static char sym[] = "vm_page_queues";
+typedef struct vpgqueues vm_pagequeue_t;
+#endif
+
 static int fd;
 static int mflag;
 static int objtreport;
 static int vnreport;
-static char sym[] = "vm_page_queues";
 static u_long objt_hits[OBJT_SG + 1];
 static const char *objt_name[] = {
 	"OBJT_DEFAULT",
@@ -167,7 +174,7 @@ main(int argc, char **argv)
 {
 	int ch, queue;
 	struct kld_sym_lookup kld;
-	struct vpgqueues *page_queues;
+	vm_pagequeue_t *page_queues;
 	vm_page_t m, next;
 
 	queue = -1;
@@ -206,12 +213,16 @@ main(int argc, char **argv)
 	if (kldsym(0, KLDSYM_LOOKUP, &kld) == -1)
 		err(1, "kldsym()");
 
-	page_queues = mmap(0, sizeof(struct vpgqueues) * PQ_COUNT,
+	page_queues = mmap(0, sizeof(vm_pagequeue_t) * PQ_COUNT,
 	    PROT_READ, MAP_SHARED, fd, kld.symvalue);
 	if (page_queues == MAP_FAILED)
 		err(1, "mmap()");
 
+#ifdef vm_pagequeue_lock
+	for (m = TAILQ_FIRST(&page_queues[queue].pq_pl); m != NULL; m = next) {
+#else
 	for (m = TAILQ_FIRST(&page_queues[queue].pl); m != NULL; m = next) {
+#endif
 		MMAP(m, m);
 		next = TAILQ_NEXT(m, pageq);
 		if (m->object != NULL)
