@@ -113,14 +113,8 @@ vnodecmp(struct vncache *vc1, struct vncache *vc2)
 }
 RB_GENERATE_STATIC(vnodes, vncache, vlink, vnodecmp);
 
-#ifdef	vm_pagequeue_lock
-static char sym[] = "vm_pagequeues";
-typedef struct vm_pagequeue vm_pagequeue_t;
-#else /* before r242941 */
-static char sym[] = "vm_page_queues";
-typedef struct vpgqueues vm_pagequeue_t;
-#endif
-
+static char vm_page_array_sym[] = "vm_page_array";
+static char vm_page_array_size_sym[] = "vm_page_array_size";
 static int fd;
 static int mflag;
 static int objtreport;
@@ -173,9 +167,10 @@ int
 main(int argc, char **argv)
 {
 	int ch, queue;
+	long i, *data;
+	off_t vm_page_array_off, vm_page_array_size;
 	struct kld_sym_lookup kld;
-	vm_pagequeue_t *page_queues;
-	vm_page_t m, next;
+	vm_page_t m, vm_page_array = NULL;
 
 	queue = -1;
 	while ((ch = getopt(argc, argv, "hmovq:")) != -1) {
@@ -209,25 +204,39 @@ main(int argc, char **argv)
 		err(1, "open(%s)", _PATH_KMEM);
 
 	kld.version = sizeof(kld);
-	kld.symname = sym;
+	kld.symname = vm_page_array_sym;
 	if (kldsym(0, KLDSYM_LOOKUP, &kld) == -1)
 		err(1, "kldsym()");
+	MMAP(data, kld.symvalue);
+	vm_page_array_off = *data;
+	MUNMAP(data);
 
-	page_queues = mmap(0, sizeof(vm_pagequeue_t) * PQ_COUNT,
-	    PROT_READ, MAP_SHARED, fd, kld.symvalue);
-	if (page_queues == MAP_FAILED)
-		err(1, "mmap()");
+	kld.version = sizeof(kld);
+	kld.symname = vm_page_array_size_sym;
+	if (kldsym(0, KLDSYM_LOOKUP, &kld) == -1)
+		err(1, "kldsym()");
+	MMAP(data, kld.symvalue);
+	vm_page_array_size = *data;
+	MUNMAP(data);
 
-#ifdef vm_pagequeue_lock
-	for (m = TAILQ_FIRST(&page_queues[queue].pq_pl); m != NULL; m = next) {
-#else
-	for (m = TAILQ_FIRST(&page_queues[queue].pl); m != NULL; m = next) {
-#endif
-		MMAP(m, m);
-		next = TAILQ_NEXT(m, pageq);
+#define	REMAP	(10000)
+	for (i = 0; i < vm_page_array_size; i++) {
+		if (i % REMAP == 0) {
+			if (i > 0)
+				if (munmap(vm_page_array,
+				    sizeof(struct vm_page) * REMAP) == -1)
+					err(1, "munmap()");
+			vm_page_array = mmap(0, sizeof(struct vm_page) * REMAP,
+			    PROT_READ, MAP_SHARED, fd,
+			    vm_page_array_off + sizeof(struct vm_page) * i);
+			if (vm_page_array == MAP_FAILED)
+				err(1, "mmap()");
+		}
+		m = &vm_page_array[i % REMAP];
+		if (m->queue != queue)
+			continue;
 		if (m->object != NULL)
 			obj_acc(m->object);
-		MUNMAP(m);
 	}
 
 	if (objtreport)
