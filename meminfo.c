@@ -1,5 +1,5 @@
 /*-
- * Copyright (c) 2012 Andrey Zonov <zont@FreeBSD.org>
+ * Copyright (c) 2012, 2013 Andrey Zonov <zont@FreeBSD.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -117,8 +117,10 @@ static char vm_page_array_sym[] = "vm_page_array";
 static char vm_page_array_size_sym[] = "vm_page_array_size";
 static int fd;
 static int mflag;
+static int actreport;
 static int objtreport;
 static int vnreport;
+static u_long act_counts[ACT_MAX + 1];
 static u_long objt_hits[OBJT_SG + 1];
 static const char *objt_name[] = {
 	"OBJT_DEFAULT",
@@ -173,8 +175,11 @@ main(int argc, char **argv)
 	vm_page_t m, vm_page_array = NULL;
 
 	queue = -1;
-	while ((ch = getopt(argc, argv, "hmovq:")) != -1) {
+	while ((ch = getopt(argc, argv, "ahmovq:")) != -1) {
 		switch (ch) {
+		case 'a':
+			actreport = 1;
+			break;
 		case 'm':
 			mflag = 1;
 			break;
@@ -193,11 +198,16 @@ main(int argc, char **argv)
 		}
 	}
 
-	if (objtreport == 0 && vnreport == 0)
+	if (actreport == 0 && objtreport == 0 && vnreport == 0)
 		usage();
 
 	if (queue < PQ_INACTIVE || queue > PQ_ACTIVE)
 		usage();
+
+	if (actreport && queue != PQ_ACTIVE) {
+		fprintf(stderr, "Maybe used only for active queue\n");
+		exit(1);
+	}
 
 	fd = open(_PATH_KMEM, O_RDONLY, 0);
 	if (fd == -1)
@@ -235,8 +245,17 @@ main(int argc, char **argv)
 		m = &vm_page_array[i % REMAP];
 		if (m->queue != queue)
 			continue;
+		if (actreport)
+			act_counts[m->act_count]++;
 		if (m->object != NULL)
 			obj_acc(m->object);
+	}
+
+	if (actreport) {
+		for (i = 0; i <= ACT_MAX; i++) {
+			if (act_counts[i] > 0)
+				printf("act[%ld] = %lu\n", i, act_counts[i]);
+		}
 	}
 
 	if (objtreport)
@@ -252,8 +271,9 @@ static void
 usage(void)
 {
 
-	fprintf(stderr, "usage: meminfo [-m] <-o|-v> -q queue\n"
+	fprintf(stderr, "usage: meminfo [-m] <-a|-o|-v> -q queue\n"
 			"  options:\n"
+			"    -a report about active counts\n"
 			"    -m report in megabytes\n"
 			"    -o report about object types\n"
 			"    -v report about vnode hits\n"
