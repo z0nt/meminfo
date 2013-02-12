@@ -170,7 +170,7 @@ main(int argc, char **argv)
 {
 	int ch, queue;
 	long i, *data;
-	off_t vm_page_array_off, vm_page_array_size;
+	off_t remap, vm_page_array_off, vm_page_array_size;
 	struct kld_sym_lookup kld;
 	vm_page_t m, vm_page_array = NULL;
 
@@ -229,20 +229,24 @@ main(int argc, char **argv)
 	vm_page_array_size = *data;
 	MUNMAP(data);
 
-#define	REMAP	(10000)
+	/* Remap every 2Mb to reduce memory usage */
+	remap = (2 * 1024 * 1024) / sizeof(struct vm_page);
 	for (i = 0; i < vm_page_array_size; i++) {
-		if (i % REMAP == 0) {
-			if (i > 0)
+		if (i % remap == 0) {
+			if (vm_page_array) {
 				if (munmap(vm_page_array,
-				    sizeof(struct vm_page) * REMAP) == -1)
+				    sizeof(struct vm_page) * remap) == -1)
 					err(1, "munmap()");
-			vm_page_array = mmap(0, sizeof(struct vm_page) * REMAP,
+			}
+			if (vm_page_array_size - i < remap)
+				remap = vm_page_array_size - i;
+			vm_page_array = mmap(0, sizeof(struct vm_page) * remap,
 			    PROT_READ, MAP_SHARED, fd,
 			    vm_page_array_off + sizeof(struct vm_page) * i);
 			if (vm_page_array == MAP_FAILED)
 				err(1, "mmap()");
 		}
-		m = &vm_page_array[i % REMAP];
+		m = &vm_page_array[i % remap];
 		if (m->queue != queue)
 			continue;
 		if (actreport)
